@@ -11,7 +11,7 @@
   "cfnExecutionRoleArn": "arn:aws:iam::392833766185:role/CreCfnExecution",
   "appSlug": "aws-cre-automation-mhaken",
   "githubUsername": "hakenmt",
-  "githubVisibility": "private",
+  "githubVisibility": "public",
   "ciVariables": [
     "ASSETS_BUCKET_PREFIX",
     "AWS_CREDS_TARGET_ROLE",
