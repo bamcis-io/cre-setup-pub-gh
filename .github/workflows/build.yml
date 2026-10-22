@@ -4,6 +4,7 @@ name: build
 on:
   pull_request: {}
   workflow_dispatch: {}
+  merge_group: {}
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -90,37 +91,3 @@ jobs:
           git add .
           git commit -s -m "chore: self mutation"
           git push origin "HEAD:$PULL_REQUEST_REF"
-  merge:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions: {}
-    if: github.event_name == 'pull_request' && needs.build.result == 'success' && !needs.build.outputs.self_mutation_happened && github.event.pull_request.head.repo.full_name == github.repository
-    steps:
-      - name: Generate token
-        id: generate_token
-        uses: actions/create-github-app-token@v3.2.0
-        with:
-          app-id: ${{ secrets.PROJEN_APP_ID }}
-          private-key: ${{ secrets.PROJEN_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-      - name: Merge the PR (its build passed)
-        id: merge_the_pr_its_build_passed
-        env:
-          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          TRUSTED: hakenmt aws-cre-automation-mhaken[bot] github-actions[bot] dependabot[bot]
-        run: |-
-          set -euo pipefail
-          info=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json state,isDraft,author,headRefOid,labels --jq '[.state, .isDraft, .author.login, .headRefOid, ([.labels[].name] | join(","))] | @tsv')
-          IFS=$'\t' read -r state draft author head labels <<<"$info"
-          case "$author" in app/*) author="${author#app/}[bot]" ;; esac
-          skip() { echo "Not merging: $1."; exit 0; }
-          [ "$state" = OPEN ] || skip "the PR is $state"
-          [ "$draft" = false ] || skip "the PR is a draft"
-          case ",$labels," in *,auto-merge,*) ;; *) skip "no auto-merge label" ;; esac
-          case " $TRUSTED " in *" $author "*) ;; *) skip "$author is not a trusted author" ;; esac
-          [ "$head" = "$HEAD_SHA" ] || skip "the PR moved on to $head; its own build merges it"
-          gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --squash --match-head-commit "$HEAD_SHA"
