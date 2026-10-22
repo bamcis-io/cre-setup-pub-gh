@@ -1,0 +1,707 @@
+{
+  "manifestVersion": 3,
+  "env": {
+    "PATH": "$(yarn exec node --print process.env.PATH)",
+    "PROJECT_NAME": "cre-setup-pub-gh"
+  },
+  "tasks": {
+    "branch": {
+      "name": "branch",
+      "description": "Start new work: create <name> from a fresh origin/main, carrying uncommitted changes.",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/branch.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "build": {
+      "name": "build",
+      "description": "Full release build",
+      "steps": [
+        {
+          "spawn": "default"
+        },
+        {
+          "spawn": "pre-compile"
+        },
+        {
+          "spawn": "compile"
+        },
+        {
+          "spawn": "post-compile"
+        },
+        {
+          "spawn": "test"
+        },
+        {
+          "spawn": "package"
+        }
+      ]
+    },
+    "bump": {
+      "name": "bump",
+      "description": "Bumps version based on latest git tag and generates a changelog entry",
+      "env": {
+        "OUTFILE": "package.json",
+        "CHANGELOG": "dist/changelog.md",
+        "BUMPFILE": "dist/version.txt",
+        "RELEASETAG": "dist/releasetag.txt",
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^13"
+      },
+      "steps": [
+        {
+          "builtin": "release/resolve-latest-tag",
+          "outputEnv": "LATEST_TAG"
+        },
+        {
+          "spawn": "bump:releasable-commits",
+          "outputEnv": "RELEASABLE_COMMITS",
+          "condition": "git rev-parse --verify --quiet \"refs/tags/$LATEST_TAG\""
+        },
+        {
+          "builtin": "release/suggest-version-bump",
+          "outputEnv": "SUGGESTED_BUMP"
+        },
+        {
+          "builtin": "release/apply-version-bump"
+        }
+      ],
+      "condition": "git log --oneline -1 | grep -v \"chore(release):\" > /dev/null"
+    },
+    "bump:releasable-commits": {
+      "name": "bump:releasable-commits",
+      "description": "Print the releasable commits since the latest release",
+      "steps": [
+        {
+          "exec": "git log --oneline $LATEST_TAG..HEAD"
+        }
+      ]
+    },
+    "bundle": {
+      "name": "bundle",
+      "description": "Prepare assets"
+    },
+    "cfs:curl": {
+      "name": "cfs:curl",
+      "description": "Call a CloudFront Signer (Midway) protected URL: cfs:curl GET https://dxxxx.cloudfront.net/path",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/cfs/cfs-curl.sh \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "cfs:onboard": {
+      "name": "cfs:onboard",
+      "description": "Onboard the edge distribution at CloudFrontSigner (Midway; once, after the first edge deploy). --status | --offboard",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/cfs/cfs-onboard.sh \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "check:deploy-prereqs": {
+      "name": "check:deploy-prereqs",
+      "description": "Fail if a stack needs a region bucket or CI/CD variable setup never made (cre-setup.json); prints the setup command",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/check-deploy-prereqs.py cre-stacks.json cre-setup.json cdk.out"
+        }
+      ]
+    },
+    "check:generated": {
+      "name": "check:generated",
+      "description": "CI only: fail when the committed generated files (pipeline, cre-stacks.json, ...) are not what npx projen makes",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/build/check-generated.sh"
+        }
+      ]
+    },
+    "check:stack-plan": {
+      "name": "check:stack-plan",
+      "description": "Fail if the synthesized stacks differ from the stacks list in .projenrc.ts (names, environments, parameters, outputs)",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/check-stack-plan.py cre-stacks.json cdk.out"
+        }
+      ]
+    },
+    "check:stack-wiring": {
+      "name": "check:stack-wiring",
+      "description": "Fail if any synthesized stack uses a CloudFormation export/import (pass outputs -> parameters instead)",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/check-stack-wiring.py cdk.out"
+        }
+      ]
+    },
+    "ci:build:cdk": {
+      "name": "ci:build:cdk",
+      "description": "CI: CDK synthesis + tests + asset staging (provider build-job entry point)",
+      "steps": [
+        {
+          "exec": "rm -rf assets cdk.out && mkdir -p assets dist"
+        },
+        {
+          "spawn": "check:generated"
+        },
+        {
+          "spawn": "compile"
+        },
+        {
+          "spawn": "synth:silent"
+        },
+        {
+          "spawn": "check:stack-wiring"
+        },
+        {
+          "spawn": "check:stack-plan"
+        },
+        {
+          "spawn": "check:deploy-prereqs"
+        },
+        {
+          "spawn": "test"
+        },
+        {
+          "spawn": "package:assets"
+        }
+      ]
+    },
+    "ci:build:package": {
+      "name": "ci:build:package",
+      "description": "CI: zip assets/ into dist/content.zip (provider package-job entry point)",
+      "steps": [
+        {
+          "spawn": "package:content"
+        }
+      ]
+    },
+    "ci:rerun": {
+      "name": "ci:rerun",
+      "description": "Retry the failed jobs of main's deploy (or --sha s); --all runs the whole deploy again. Then: npx projen watch --sha <sha>.",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/ci.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "commit": {
+      "name": "commit",
+      "description": "Validate (synth + build), stage and commit. Never pushes. Needs --message.",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/commit.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "compile": {
+      "name": "compile",
+      "description": "Only compile"
+    },
+    "default": {
+      "name": "default",
+      "description": "Synthesize project files",
+      "steps": [
+        {
+          "execArgs": [
+            "ts-node",
+            "--project",
+            "projenrc/tsconfig.json",
+            ".projenrc.ts"
+          ]
+        }
+      ]
+    },
+    "deploy": {
+      "name": "deploy",
+      "description": "Run the deploy pipeline locally (builds first): deploy:upload, deploy:stack per stack in order, deploy:prune. [--stack id] [--no-build] [--profile p]",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/deploy-local.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "deploy:prune": {
+      "name": "deploy:prune",
+      "description": "Remove old deploy prefixes from every region bucket (keeps current + 2).",
+      "requiredEnv": [
+        "ASSETS_BUCKET_PREFIX",
+        "ASSETS_PREFIX"
+      ],
+      "steps": [
+        {
+          "exec": "PRUNE_BUCKETS=\"\" bash projenrc/cre/scripts/build/prune-assets.sh"
+        }
+      ]
+    },
+    "deploy:s3": {
+      "name": "deploy:s3",
+      "description": "Sync dist/content.zip contents to every listed region's assets bucket.",
+      "requiredEnv": [
+        "ASSETS_BUCKET_PREFIX",
+        "ASSETS_PREFIX"
+      ],
+      "steps": [
+        {
+          "say": "No stacks in the app yet: nothing to upload."
+        }
+      ]
+    },
+    "deploy:stack": {
+      "name": "deploy:stack",
+      "description": "Deploy one stack with the variables its pipeline job sets (see cre-stacks.json `jobs`).",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/build/deploy-stack.sh"
+        }
+      ]
+    },
+    "deploy:upload": {
+      "name": "deploy:upload",
+      "description": "Publish build artifacts: S3 content, and container images with containerImages.",
+      "steps": [
+        {
+          "spawn": "deploy:s3"
+        }
+      ]
+    },
+    "eject": {
+      "name": "eject",
+      "description": "Remove projen from the project",
+      "env": {
+        "PROJEN_EJECTING": "true"
+      },
+      "steps": [
+        {
+          "spawn": "default"
+        }
+      ]
+    },
+    "eslint": {
+      "name": "eslint",
+      "description": "Runs eslint against the codebase",
+      "env": {
+        "ESLINT_USE_FLAT_CONFIG": "false",
+        "NODE_NO_WARNINGS": "1"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "eslint",
+            "--ext",
+            ".ts,.tsx",
+            "--fix",
+            "--no-error-on-unmatched-pattern",
+            "$@",
+            "src",
+            "test",
+            "src/cdk",
+            ".projenrc.ts",
+            "projenrc"
+          ],
+          "receiveArgs": true
+        }
+      ]
+    },
+    "git:status": {
+      "name": "git:status",
+      "description": "Read-only: classify the repo state and say what `push` would do.",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/status.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "install": {
+      "name": "install",
+      "description": "Install project dependencies and update lockfile (non-frozen)",
+      "steps": [
+        {
+          "exec": "yarn install --no-immutable"
+        }
+      ]
+    },
+    "install:ci": {
+      "name": "install:ci",
+      "description": "Install project dependencies using frozen lockfile",
+      "steps": [
+        {
+          "exec": "yarn install --immutable"
+        }
+      ]
+    },
+    "package": {
+      "name": "package",
+      "description": "Stage CFN assets and zip into dist/content.zip",
+      "steps": [
+        {
+          "spawn": "package:assets"
+        },
+        {
+          "spawn": "package:content"
+        }
+      ]
+    },
+    "package:assets": {
+      "name": "package:assets",
+      "description": "Stage every stack's assets into assets/ and rewrite nested templates",
+      "steps": [
+        {
+          "exec": "chmod +x projenrc/cre/scripts/build/package.py"
+        }
+      ]
+    },
+    "package:content": {
+      "name": "package:content",
+      "description": "Build dist/content.zip — the artifact the deploy stage consumes",
+      "steps": [
+        {
+          "exec": "rm -f dist/content.zip"
+        },
+        {
+          "exec": "mkdir -p dist assets && cd assets && if [ -n \"$(ls -A)\" ]; then zip -r ../dist/content.zip .; else python3 -c \"import zipfile; zipfile.ZipFile('../dist/content.zip', 'w').close()\"; fi",
+          "shell": [
+            "bash",
+            "-c"
+          ]
+        }
+      ]
+    },
+    "post-compile": {
+      "name": "post-compile",
+      "description": "Runs after successful compilation",
+      "steps": [
+        {
+          "spawn": "synth:silent"
+        },
+        {
+          "spawn": "check:stack-wiring"
+        },
+        {
+          "spawn": "check:stack-plan"
+        },
+        {
+          "spawn": "check:deploy-prereqs"
+        }
+      ]
+    },
+    "post-upgrade": {
+      "name": "post-upgrade",
+      "description": "Runs after upgrading dependencies"
+    },
+    "pre-compile": {
+      "name": "pre-compile",
+      "description": "Prepare the project for compilation",
+      "steps": [
+        {
+          "exec": "rm -rf assets cdk.out && mkdir -p assets dist"
+        }
+      ]
+    },
+    "push": {
+      "name": "push",
+      "description": "Validate, commit, push, open/update the MR/PR and arm auto-merge. Needs --message; --branch when a new branch is needed.",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/push.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "release": {
+      "name": "release",
+      "description": "Prepare a release from \"main\" branch",
+      "env": {
+        "RELEASE": "true"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "rm",
+            "-fr",
+            "dist"
+          ]
+        },
+        {
+          "spawn": "bump"
+        },
+        {
+          "spawn": "build"
+        },
+        {
+          "spawn": "unbump"
+        },
+        {
+          "exec": "git diff --ignore-space-at-eol --exit-code"
+        }
+      ],
+      "condition": "git log --oneline -1 | grep -v \"chore(release):\" > /dev/null"
+    },
+    "setup:aws": {
+      "name": "setup:aws",
+      "description": "Assets buckets, CloudFormation execution role and CI runner role in the target account (idempotent).",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/setup/aws_account.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "setup:dns": {
+      "name": "setup:dns",
+      "description": "External DNS: check the zone, or create the cross-account DNS roles / SuperNova prerequisites.",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/setup/dns.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "setup:github-app": {
+      "name": "setup:github-app",
+      "description": "Create (once) or find your CRE automation GitHub App, aws-cre-automation-<alias>, and its key in ~/.cre.",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/setup/github_app.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "setup:github-public": {
+      "name": "setup:github-public",
+      "description": "A private repo made public, end to end (from a clean main): scan the history for credentials, show what becomes readable; with --yes make it public, protect main, regenerate the workflows for GitHub auto-merge, push them as a PR and wait for it to merge.",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/setup/repo_github.py publish \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "setup:repo": {
+      "name": "setup:repo",
+      "description": "Create/adopt the GitHub repo and set CI variables (prepare | finalize).",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/setup/repo_github.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "skills:doctor": {
+      "name": "skills:doctor",
+      "description": "Check that the vended agent skills (.kiro/skills/* symlinks into cre-demo-template) resolve.",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/build/skills-doctor.sh"
+        }
+      ]
+    },
+    "stacks": {
+      "name": "stacks",
+      "description": "Each planned stack's deployed status, plus orphans (this project's stacks no longer in the plan). [--profile p]",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/stacks.py status \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "stacks:outputs": {
+      "name": "stacks:outputs",
+      "description": "The deployed stacks' outputs (URLs, ids) as `<stack> <Key>=<Value>`. [--stack id] [--profile p]",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/stacks.py outputs \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "synth": {
+      "name": "synth",
+      "description": "Synthesizes your cdk app into cdk.out",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "synth"
+          ]
+        }
+      ]
+    },
+    "synth:silent": {
+      "name": "synth:silent",
+      "description": "Synthesizes your cdk app into cdk.out and suppresses the template in stdout (part of \"yarn build\")",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/build/synth.sh"
+        }
+      ]
+    },
+    "teardown": {
+      "name": "teardown",
+      "description": "Delete the stacks in reverse deploy order (prints first; --yes deletes). [--orphans | --stack id] [--profile p]",
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/build/stacks.py teardown \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "test": {
+      "name": "test",
+      "description": "Run tests",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/template/verify-constructs.sh cre-constructs"
+        },
+        {
+          "execArgs": [
+            "jest",
+            "--passWithNoTests",
+            "--updateSnapshot"
+          ],
+          "receiveArgs": true
+        },
+        {
+          "spawn": "eslint"
+        }
+      ]
+    },
+    "test:watch": {
+      "name": "test:watch",
+      "description": "Run jest in watch mode",
+      "steps": [
+        {
+          "execArgs": [
+            "jest",
+            "--watch"
+          ]
+        }
+      ]
+    },
+    "unbump": {
+      "name": "unbump",
+      "description": "Restores version to 0.0.0",
+      "env": {
+        "OUTFILE": "package.json",
+        "CHANGELOG": "dist/changelog.md",
+        "BUMPFILE": "dist/version.txt",
+        "RELEASETAG": "dist/releasetag.txt",
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^13"
+      },
+      "steps": [
+        {
+          "builtin": "release/reset-version"
+        }
+      ]
+    },
+    "update-template": {
+      "name": "update-template",
+      "description": "Pull the cre-demo-template clone (recorded in projenrc/cre/SOURCE.json, else the sibling; --from <path>), refresh projenrc/cre, cre-constructs and the skill links from it, then synth + build.",
+      "steps": [
+        {
+          "exec": "bash projenrc/cre/scripts/template/update-template.sh \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "upgrade": {
+      "name": "upgrade",
+      "description": "upgrade dependencies",
+      "env": {
+        "CI": "0",
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "yarn",
+            "dlx",
+            "npm-check-updates@20",
+            "--upgrade",
+            "--target=minor",
+            "--peer",
+            "--no-deprecated",
+            "--dep=dev,prod,peer,optional",
+            "--filter=@types/jest,@types/node,esbuild,eslint-import-resolver-typescript,eslint-plugin-import,jest,ts-jest,ts-node"
+          ]
+        },
+        {
+          "exec": "yarn install --no-immutable"
+        },
+        {
+          "execArgs": [
+            "yarn",
+            "up",
+            "-R",
+            "@stylistic/eslint-plugin",
+            "@types/jest",
+            "@types/node",
+            "@typescript-eslint/eslint-plugin",
+            "@typescript-eslint/parser",
+            "aws-cdk",
+            "commit-and-tag-version",
+            "esbuild",
+            "eslint-import-resolver-typescript",
+            "eslint-plugin-import",
+            "eslint",
+            "jest",
+            "jest-junit",
+            "projen",
+            "ts-jest",
+            "ts-node",
+            "typescript",
+            "@cre/constructs",
+            "aws-cdk-lib",
+            "constructs"
+          ]
+        },
+        {
+          "exec": "yarn projen"
+        },
+        {
+          "spawn": "post-upgrade"
+        }
+      ]
+    },
+    "watch": {
+      "name": "watch",
+      "description": "Read-only: follow an MR/PR from its checks through the merge to the deploy of its merge commit. [<n>|--branch b|--sha s] [--until checks|merged|deployed]",
+      "env": {
+        "CRE_GIT_PROVIDER": "github"
+      },
+      "steps": [
+        {
+          "exec": "python3 projenrc/cre/scripts/git/watch.py \"$@\"",
+          "receiveArgs": true
+        }
+      ]
+    }
+  },
+  "//": "~~ Generated by projen. To modify, edit .projenrc.ts and run \"yarn projen\"."
+}

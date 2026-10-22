@@ -1,0 +1,11 @@
+# `COPY . .` takes the whole build context, overlays included. Keep local tooling state out
+# of the image (and out of the CDK asset hash — DockerImageAsset honours this file too).
+__pycache__
+*.pyc
+.venv
+venv
+.git
+.pytest_cache
+node_modules
+cdk.out
+.DS_Store

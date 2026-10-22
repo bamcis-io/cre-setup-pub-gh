@@ -1,0 +1,9 @@
+{
+  "name": "@cre/constructs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CRE construct library, installed from cre-demo-template/constructs/src. Do not edit: change it in cre-demo-template and run `npx projen update-template`.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "creTemplateSha": "00eeb9ee22040b4635c13de7c69e4c8d4d9a7733"
+}
